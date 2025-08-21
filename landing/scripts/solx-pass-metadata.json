@@ -1,0 +1,61 @@
+{
+  "name": "Solstudio Platform Pass",
+  "symbol": "SOLXPASS",
+  "description": "Exclusive access pass to premium features on the Solstudio platform. This NFT grants holders advanced token creation tools, priority transaction processing, exclusive platform features, early access to new updates, and premium support. Valid for lifetime access.",
+  "image": "https://peach-objective-pelican-416.mypinata.cloud/ipfs/bafybeibtdfkmapgo3xvdqnkuhp7mn67pyrkgb2emlftttrxfcrul4wumh4",
+  "external_url": "https://solstudio.so",
+  "attributes": [
+    {
+      "trait_type": "Pass Type",
+      "value": "Premium"
+    },
+    {
+      "trait_type": "Access Level",
+      "value": "Full Platform"
+    },
+    {
+      "trait_type": "Benefits",
+      "value": "Priority Support"
+    },
+    {
+      "trait_type": "Transaction Priority",
+      "value": "High"
+    },
+    {
+      "trait_type": "Early Access",
+      "value": "Enabled"
+    },
+    {
+      "trait_type": "Valid Until",
+      "value": "Lifetime"
+    },
+    {
+      "trait_type": "Edition",
+      "value": "Genesis"
+    },
+    {
+      "trait_type": "Platform",
+      "value": "Solstudio Tools"
+    }
+  ],
+  "properties": {
+    "files": [
+      {
+        "uri": "https://peach-objective-pelican-416.mypinata.cloud/ipfs/bafybeibtdfkmapgo3xvdqnkuhp7mn67pyrkgb2emlftttrxfcrul4wumh4",
+        "type": "image/png",
+        "cdn": true
+      }
+    ],
+    "category": "image",
+    "creators": [
+      {
+        "address": "CfyR2cyWjJgfQoqjB4fmaV89NkvffPAKRDRaoXWx1Bua",
+        "share": 100
+      }
+    ]
+  },
+  "collection": {
+    "name": "Solstudio Platform Passes",
+    "family": "Solstudio Tools"
+  }
+} 
