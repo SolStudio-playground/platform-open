@@ -18,7 +18,7 @@ import { Alert, CircularProgress, Grid, Chip, Divider, Paper } from '@mui/materi
 import Iconify from 'src/components/iconify';
 
 // Types from the API
-import type { PostResponse, PostError } from 'src/app/api/nft-pass/checkout/route';
+import type { PostResponse, PostError, AddSignaturesResponse } from 'src/app/api/nft-pass/checkout/route';
 
 // ----------------------------------------------------------------------
 
@@ -177,21 +177,19 @@ export default function MintNFTPass() {
     }
   }, []);
 
-  // Handler for performing the transaction with a connected wallet
-  const mintNFT = useCallback(async (e: React.MouseEvent) => {
-    e.preventDefault();
-    
+  const handleMint = useCallback(async () => {
     if (!publicKey || !signTransaction) {
       setError('Please connect your wallet first');
       return;
     }
-    
+
     setLoading(true);
     setError(null);
     setSuccess(false);
 
     try {
-      // Fetch the transaction from our checkout API
+      // Step 1: Fetch the unsigned transaction from our checkout API
+      console.log('Step 1: Fetching unsigned transaction...');
       const response = await fetch('/api/nft-pass/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -208,22 +206,50 @@ export default function MintNFTPass() {
         return;
       }
 
-      // We receive the transaction serialized to base64, deserialize it to send
+      // Step 2: Deserialize the unsigned transaction
+      console.log('Step 2: Deserializing unsigned transaction...');
       const transaction = Transaction.from(Buffer.from(responseBody.transaction, 'base64'));
       
-      // Sign the transaction
-      const signedTransaction = await signTransaction(transaction);
+      // Step 3: User wallet signs FIRST (Phantom's recommended order)
+      console.log('Step 3: User wallet signing transaction...');
+      const userSignedTransaction = await signTransaction(transaction);
       
-      // Serialize the signed transaction
-      const rawTransaction = signedTransaction.serialize();
+      // Step 4: Send the user-signed transaction back to add additional signatures
+      console.log('Step 4: Adding additional signatures...');
+      const userSignedBase64 = userSignedTransaction.serialize().toString('base64');
       
-      // Send the raw transaction
-      const signature = await connection.sendRawTransaction(rawTransaction, {
+      const signatureResponse = await fetch('/api/nft-pass/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          account: publicKey.toBase58(),
+          signedTransaction: userSignedBase64 
+        })
+      });
+
+      const signatureBody = await signatureResponse.json() as AddSignaturesResponse | PostError;
+
+      if ('error' in signatureBody) {
+        const { error: signatureError } = signatureBody;
+        console.error(signatureError);
+        setError(`Signature error: ${signatureError}`);
+        setLoading(false);
+        return;
+      }
+
+      // Step 5: Deserialize the fully signed transaction
+      console.log('Step 5: Deserializing fully signed transaction...');
+      const fullySignedTransaction = Transaction.from(Buffer.from(signatureBody.fullySignedTransaction, 'base64'));
+      
+      // Step 6: Send the fully signed transaction
+      console.log('Step 6: Sending fully signed transaction...');
+      const signature = await connection.sendRawTransaction(fullySignedTransaction.serialize(), {
         skipPreflight: false,
         preflightCommitment: 'confirmed',
       });
       
-      // Wait for confirmation using the new format
+      // Step 7: Wait for confirmation
+      console.log('Step 7: Waiting for transaction confirmation...');
       const latestBlockhash = await connection.getLatestBlockhash();
       const confirmation = await connection.confirmTransaction({
         signature,
@@ -358,7 +384,7 @@ export default function MintNFTPass() {
                       size="large"
                       variant="contained"
                       fullWidth
-                      onClick={mintNFT}
+                      onClick={handleMint}
                       disabled={loading || success}
                       startIcon={startIcon}
                       sx={{

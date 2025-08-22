@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Connection, Keypair, PublicKey } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js';
 import { 
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
@@ -45,6 +45,16 @@ export type PostError = {
   error: string;
 }
 
+export type AddSignaturesRequest = {
+  account: string;
+  signedTransaction: string; // Base64 encoded transaction signed by user
+}
+
+export type AddSignaturesResponse = {
+  fullySignedTransaction: string; // Base64 encoded transaction with all signatures
+  message: string;
+}
+
 export async function GET() {
   const response: GetResponse = {
     label: "Solstudio Platform",
@@ -88,9 +98,11 @@ async function createNFTTransaction(account: PublicKey): Promise<PostResponse> {
 
   const nfts = metaplex.nfts();
 
-  // The mint needs to sign the transaction, so we generate a new keypair for it
-  const mintKeypair = Keypair.generate();
-  console.log('NFT Mint address:', mintKeypair.publicKey.toString());
+  // Create a deterministic mint keypair based on the user's account
+  // This ensures the same mint address is generated for the same user
+  const mintSeed = account.toBytes();
+  const mintKeypair = Keypair.fromSeed(mintSeed.slice(0, 32));
+  console.log('NFT Mint address (deterministic):', mintKeypair.publicKey.toString());
 
   // Create a transaction builder to create the NFT
   console.log('Creating NFT with metadata URI:', METADATA_URI);
@@ -105,8 +117,7 @@ async function createNFTTransaction(account: PublicKey): Promise<PostResponse> {
   });
 
   // Get USDC mint info first
-  const usdcMint = await getMint(connection, USDC_ADDRESS);
-  const decimals = usdcMint.decimals;
+  const { decimals } = await getMint(connection, USDC_ADDRESS);
 
   // Get the associated token addresses
   const fromUsdcAddress = await getAssociatedTokenAddress(
@@ -209,15 +220,15 @@ async function createNFTTransaction(account: PublicKey): Promise<PostResponse> {
   // Set the fee payer to the buyer (they will pay for the transaction)
   transaction.feePayer = account;
 
-  // Partially sign the transaction, as the shop and the mint
-  // The account is also a required signer, but they'll sign it with their wallet after we return it
-  transaction.sign(shopKeypair, mintKeypair);
+  // IMPORTANT: Don't pre-sign the transaction here
+  // We want the user to sign first, then we'll add additional signatures
+  // transaction.sign(shopKeypair, mintKeypair); // REMOVED THIS LINE
 
   console.log('\n=== Transaction Details ===');
   console.log('Transaction signatures needed from:', [
-    `${account.toString()} (buyer)`,
-    `${shopKeypair.publicKey.toString()} (shop) - already signed`,
-    `${mintKeypair.publicKey.toString()} (mint) - already signed`
+    `${account.toString()} (buyer) - will sign first`,
+    `${shopKeypair.publicKey.toString()} (shop) - will sign after buyer`,
+    `${mintKeypair.publicKey.toString()} (mint) - will sign after buyer`
   ]);
   console.log('Number of instructions:', transaction.instructions.length);
   console.log('Fee payer:', transaction.feePayer?.toString() || 'Not set');
@@ -267,8 +278,9 @@ async function createNFTTransaction(account: PublicKey): Promise<PostResponse> {
   }
 
   // Serialize the transaction and convert to base64 to return it
+  // IMPORTANT: Don't require all signatures since we haven't signed yet
   const serializedTransaction = transaction.serialize({
-    requireAllSignatures: false // account is a missing signature
+    requireAllSignatures: false // No signatures required yet
   });
   const base64 = serializedTransaction.toString('base64');
 
@@ -285,12 +297,72 @@ async function createNFTTransaction(account: PublicKey): Promise<PostResponse> {
   };
 }
 
+async function addAdditionalSignatures(signedTransactionBase64: string): Promise<AddSignaturesResponse> {
+  console.log('=== Adding Additional Signatures ===');
+  
+  // Get the shop keypair from the environment variable
+  const shopPrivateKey = process.env.SHOP_PRIVATE_KEY;
+  if (!shopPrivateKey) {
+    throw new Error('SHOP_PRIVATE_KEY not found');
+  }
+  
+  const shopKeypair = Keypair.fromSecretKey(base58.decode(shopPrivateKey));
+  
+  // Deserialize the user-signed transaction
+  const userSignedTransaction = Transaction.from(Buffer.from(signedTransactionBase64, 'base64'));
+  
+  // Generate the same deterministic mint keypair based on the fee payer
+  // The fee payer should be the user's account
+  if (!userSignedTransaction.feePayer) {
+    throw new Error('Transaction fee payer not found');
+  }
+  
+  const mintSeed = userSignedTransaction.feePayer.toBytes();
+  const mintKeypair = Keypair.fromSeed(mintSeed.slice(0, 32));
+  
+  console.log('Adding signatures from:');
+  console.log('- Shop wallet:', shopKeypair.publicKey.toString());
+  console.log('- Mint wallet:', mintKeypair.publicKey.toString());
+  
+  // Add additional signatures using partialSign
+  userSignedTransaction.partialSign(shopKeypair, mintKeypair);
+  
+  console.log('✅ Additional signatures added successfully');
+  
+  // Serialize the fully signed transaction
+  const fullySignedTransaction = userSignedTransaction.serialize();
+  const base64 = fullySignedTransaction.toString('base64');
+  
+  return {
+    fullySignedTransaction: base64,
+    message: 'Transaction fully signed and ready to send'
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     console.log('\n=== NFT Pass Checkout API Called ===');
     const body = await request.json();
     console.log('Request body:', body);
     
+    // Check if this is a request to add signatures or create a new transaction
+    if (body.signedTransaction) {
+      // This is a request to add additional signatures
+      console.log('Adding additional signatures to user-signed transaction');
+      const { signedTransaction } = body as AddSignaturesRequest;
+      
+      if (!signedTransaction) {
+        return NextResponse.json(
+          { error: "No signed transaction provided" } as PostError, 
+          { status: 400 }
+        );
+      }
+      
+      const signatureResult = await addAdditionalSignatures(signedTransaction);
+      return NextResponse.json(signatureResult);
+    }
+    
+    // This is a request to create a new transaction
     const { account } = body as InputData;
     
     if (!account) {
@@ -311,7 +383,7 @@ export async function POST(request: NextRequest) {
     console.error('Error stack:', error.stack);
     
     // Return more specific error messages
-    let errorMessage = 'Error creating transaction';
+    let errorMessage = 'Error processing request';
     if (error.message) {
       errorMessage = error.message;
     }
